@@ -1,0 +1,597 @@
+# 1-Hour Specmatic Contract-Driven Development Demo
+
+## Time Breakdown
+- **10 mins**: Setup contracts (Swagger files)
+- **20 mins**: Add endpoints to microservices
+- **15 mins**: Setup Specmatic
+- **10 mins**: Demo contract testing
+- **5 mins**: Show contract violations
+
+## Step 1: Create Contracts First (10 minutes)
+
+### Create project structure:
+```bash
+mkdir specmatic-demo && cd specmatic-demo
+mkdir contracts user-service order-service
+```
+
+### Contract 1: User Service (`contracts/user-service.yaml`)
+```yaml
+openapi: 3.0.0
+info:
+  title: User Service API
+  version: 1.0.0
+  description: Manages user data
+servers:
+  - url: http://localhost:8080
+paths:
+  /users/{id}:
+    get:
+      summary: Get user by ID
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+            example: 1
+      responses:
+        '200':
+          description: User found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+        '404':
+          description: User not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /users:
+    post:
+      summary: Create new user
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateUserRequest'
+      responses:
+        '201':
+          description: User created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+
+components:
+  schemas:
+    User:
+      type: object
+      required: [id, name, email]
+      properties:
+        id:
+          type: integer
+          example: 1
+        name:
+          type: string
+          example: "John Doe"
+        email:
+          type: string
+          format: email
+          example: "john@example.com"
+    CreateUserRequest:
+      type: object
+      required: [name, email]
+      properties:
+        name:
+          type: string
+          example: "John Doe"
+        email:
+          type: string
+          format: email
+          example: "john@example.com"
+    Error:
+      type: object
+      required: [message]
+      properties:
+        message:
+          type: string
+          example: "User not found"
+```
+
+### Contract 2: Order Service (`contracts/order-service.yaml`)
+```yaml
+openapi: 3.0.0
+info:
+  title: Order Service API
+  version: 1.0.0
+  description: Manages orders
+servers:
+  - url: http://localhost:8081
+paths:
+  /orders:
+    post:
+      summary: Create new order
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateOrderRequest'
+      responses:
+        '201':
+          description: Order created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Order'
+        '400':
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /orders/{orderId}:
+    get:
+      summary: Get order by ID
+      parameters:
+        - name: orderId
+          in: path
+          required: true
+          schema:
+            type: string
+            example: "order-123"
+      responses:
+        '200':
+          description: Order found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Order'
+        '404':
+          description: Order not found
+
+components:
+  schemas:
+    CreateOrderRequest:
+      type: object
+      required: [userId, productId, quantity]
+      properties:
+        userId:
+          type: integer
+          example: 1
+        productId:
+          type: string
+          example: "PROD-123"
+        quantity:
+          type: integer
+          minimum: 1
+          example: 2
+    Order:
+      type: object
+      required: [orderId, userId, productId, quantity, status]
+      properties:
+        orderId:
+          type: string
+          example: "order-123"
+        userId:
+          type: integer
+          example: 1
+        productId:
+          type: string
+          example: "PROD-123"
+        quantity:
+          type: integer
+          example: 2
+        status:
+          type: string
+          enum: [CREATED, PROCESSING, SHIPPED, DELIVERED]
+          example: "CREATED"
+    Error:
+      type: object
+      required: [message]
+      properties:
+        message:
+          type: string
+          example: "Invalid request"
+```
+
+## Step 2: User Service Implementation (10 minutes)
+
+### `user-service/pom.xml`
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0">
+    <modelVersion>4.0.0</modelVersion>
+    <groupId>com.demo</groupId>
+    <artifactId>user-service</artifactId>
+    <version>1.0.0</version>
+    <packaging>jar</packaging>
+
+    <properties>
+        <maven.compiler.source>11</maven.compiler.source>
+        <maven.compiler.target>11</maven.compiler.target>
+        <spring.boot.version>2.7.0</spring.boot.version>
+    </properties>
+
+    <dependencies>
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-web</artifactId>
+            <version>${spring.boot.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>in.specmatic</groupId>
+            <artifactId>specmatic-core</artifactId>
+            <version>1.2.0</version>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.junit.jupiter</groupId>
+            <artifactId>junit-jupiter</artifactId>
+            <version>5.8.2</version>
+            <scope>test</scope>
+        </dependency>
+    </dependencies>
+
+    <build>
+        <plugins>
+            <plugin>
+                <groupId>org.springframework.boot</groupId>
+                <artifactId>spring-boot-maven-plugin</artifactId>
+                <version>${spring.boot.version}</version>
+            </plugin>
+        </plugins>
+    </build>
+</project>
+```
+
+### `user-service/src/main/java/com/demo/UserServiceApplication.java`
+```java
+package com.demo;
+
+import org.springframework.boot.SpringApplication;
+import org.springframework.boot.autoconfigure.SpringBootApplication;
+import org.springframework.web.bind.annotation.*;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
+
+import java.util.HashMap;
+import java.util.Map;
+import java.util.concurrent.atomic.*;
+
+@SpringBootApplication
+@RestController
+public class UserServiceApplication {
+    
+    private Map<Integer, User> users = new HashMap<>();
+    private AtomicInteger idGenerator = new AtomicInteger(1);
+    
+    public UserServiceApplication() {
+        // Seed some data
+        users.put(1, new User(1, "John Doe", "john@example.com"));
+        users.put(2, new User(2, "Jane Smith", "jane@example.com"));
+        idGenerator.set(3);
+    }
+    
+    @GetMapping("/users/{id}")
+    public ResponseEntity<?> getUser(@PathVariable Integer id) {
+        User user = users.get(id);
+        if (user == null) {
+            return ResponseEntity.status(404)
+                .body(new ErrorResponse("User not found"));
+        }
+        return ResponseEntity.ok(user);
+    }
+    
+    @PostMapping("/users")
+    public ResponseEntity<User> createUser(@RequestBody CreateUserRequest request) {
+        int id = idGenerator.getAndIncrement();
+        User user = new User(id, request.name, request.email);
+        users.put(id, user);
+        return ResponseEntity.status(201).body(user);
+    }
+    
+    public static void main(String[] args) {
+        SpringApplication.run(UserServiceApplication.class, args);
+    }
+    
+    // DTOs
+    static class User {
+        public Integer id;
+        public String name;
+        public String email;
+        
+        public User() {}
+        
+        public User(Integer id, String name, String email) {
+            this.id = id;
+            this.name = name;
+            this.email = email;
+        }
+    }
+    
+    static class CreateUserRequest {
+        public String name;
+        public String email;
+    }
+    
+    static class ErrorResponse {
+        public String message;
+        
+        public ErrorResponse(String message) {
+            this.message = message;
+        }
+    }
+}
+```
+
+## Step 3: Order Service Implementation (10 minutes)
+
+### `order-service/pom.xml` (same as user-service)
+
+### `order-service/src/main/java/com/demo/OrderServiceApplication.java`
+```java
+package com.demo;
+
+import org.springframework.boot.SpringApplication;
+import org.springframework.boot.autoconfigure.SpringBootApplication;
+import org.springframework.web.bind.annotation.*;
+import org.springframework.http.ResponseEntity;
+
+import java.util.HashMap;
+import java.util.Map;
+import java.util.UUID;
+
+@SpringBootApplication
+@RestController
+public class OrderServiceApplication {
+    
+    private Map<String, Order> orders = new HashMap<>();
+    
+    @PostMapping("/orders")
+    public ResponseEntity<?> createOrder(@RequestBody CreateOrderRequest request) {
+        if (request.quantity <= 0) {
+            return ResponseEntity.badRequest()
+                .body(new ErrorResponse("Quantity must be positive"));
+        }
+        
+        String orderId = "order-" + UUID.randomUUID().toString().substring(0, 8);
+        Order order = new Order(orderId, request.userId, request.productId, 
+                               request.quantity, "CREATED");
+        orders.put(orderId, order);
+        
+        return ResponseEntity.status(201).body(order);
+    }
+    
+    @GetMapping("/orders/{orderId}")
+    public ResponseEntity<?> getOrder(@PathVariable String orderId) {
+        Order order = orders.get(orderId);
+        if (order == null) {
+            return ResponseEntity.notFound().build();
+        }
+        return ResponseEntity.ok(order);
+    }
+    
+    public static void main(String[] args) {
+        SpringApplication.run(OrderServiceApplication.class, args);
+    }
+    
+    // DTOs
+    static class CreateOrderRequest {
+        public Integer userId;
+        public String productId;
+        public Integer quantity;
+    }
+    
+    static class Order {
+        public String orderId;
+        public Integer userId;
+        public String productId;
+        public Integer quantity;
+        public String status;
+        
+        public Order() {}
+        
+        public Order(String orderId, Integer userId, String productId, 
+                    Integer quantity, String status) {
+            this.orderId = orderId;
+            this.userId = userId;
+            this.productId = productId;
+            this.quantity = quantity;
+            this.status = status;
+        }
+    }
+    
+    static class ErrorResponse {
+        public String message;
+        
+        public ErrorResponse(String message) {
+            this.message = message;
+        }
+    }
+}
+```
+
+## Step 4: Setup Specmatic (15 minutes)
+
+### Install Specmatic
+```bash
+npm install -g specmatic
+```
+
+### Create `specmatic.json` in project root
+```json
+{
+  "sources": [
+    {
+      "provider": "filesystem",
+      "repository": "./contracts"
+    }
+  ]
+}
+```
+
+### Add Contract Tests
+
+#### `user-service/src/test/java/com/demo/ContractTest.java`
+```java
+package com.demo;
+
+import in.specmatic.test.SpecmaticJUnitSupport;
+import org.junit.jupiter.api.BeforeAll;
+
+public class ContractTest extends SpecmaticJUnitSupport {
+    
+    @BeforeAll
+    public static void setUp() {
+        System.setProperty("host", "localhost");
+        System.setProperty("port", "8080");
+        System.setProperty("specmatic.generative.tests", "true");
+    }
+    
+    @Override
+    public String getContractPath() {
+        return "../contracts/user-service.yaml";
+    }
+}
+```
+
+#### `order-service/src/test/java/com/demo/ContractTest.java`
+```java
+package com.demo;
+
+import in.specmatic.test.SpecmaticJUnitSupport;
+import org.junit.jupiter.api.BeforeAll;
+
+public class ContractTest extends SpecmaticJUnitSupport {
+    
+    @BeforeAll
+    public static void setUp() {
+        System.setProperty("host", "localhost");
+        System.setProperty("port", "8081");
+        System.setProperty("specmatic.generative.tests", "true");
+    }
+    
+    @Override
+    public String getContractPath() {
+        return "../contracts/order-service.yaml";
+    }
+}
+```
+
+## Step 5: Demo Script (15 minutes)
+
+### Terminal Setup (3 terminals)
+
+**Terminal 1: Start User Service**
+```bash
+cd user-service
+mvn spring-boot:run
+```
+
+**Terminal 2: Start Order Service**
+```bash
+cd order-service
+mvn spring-boot:run -Dspring-boot.run.arguments=--server.port=8081
+```
+
+**Terminal 3: Demo Commands**
+
+### 1. Show Contract-First Development
+```bash
+# Show the contracts are the source of truth
+cat contracts/user-service.yaml
+cat contracts/order-service.yaml
+```
+
+### 2. Generate Stubs for Development
+```bash
+# Start mock services based on contracts
+specmatic stub contracts/user-service.yaml --port 9080 &
+specmatic stub contracts/order-service.yaml --port 9081 &
+
+# Test the stubs
+curl http://localhost:9080/users/1
+curl -X POST http://localhost:9081/orders \
+  -H "Content-Type: application/json" \
+  -d '{"userId": 1, "productId": "PROD-123", "quantity": 2}'
+```
+
+### 3. Test Real Services Against Contracts
+```bash
+# Test user service
+curl http://localhost:8080/users/1
+curl -X POST http://localhost:8080/users \
+  -H "Content-Type: application/json" \
+  -d '{"name": "Alice", "email": "alice@example.com"}'
+
+# Test order service
+curl -X POST http://localhost:8081/orders \
+  -H "Content-Type: application/json" \
+  -d '{"userId": 1, "productId": "PROD-123", "quantity": 2}'
+```
+
+### 4. Run Contract Tests
+```bash
+cd user-service
+mvn test -Dtest=ContractTest
+
+cd ../order-service
+mvn test -Dtest=ContractTest
+```
+
+### 5. Demo Contract Violations
+
+**Break the contract intentionally** - modify Order service to return different field:
+
+```java
+// In OrderServiceApplication.java, change Order constructor to:
+public Order(String orderId, Integer userId, String productId, 
+            Integer quantity, String status) {
+    this.orderId = orderId;
+    this.userId = userId;
+    this.productName = productId; // Wrong field name!
+    this.quantity = quantity;
+    this.status = status;
+}
+```
+
+**Run tests again to show failure:**
+```bash
+cd order-service
+mvn test -Dtest=ContractTest
+# This will fail and show contract violation
+```
+
+## Demo Key Points to Highlight
+
+1. **Contract-First**: Swagger files define the API before implementation
+2. **Automatic Testing**: Specmatic generates tests from contracts
+3. **Mock Generation**: Instant stubs for integration testing
+4. **Contract Compliance**: Catches when implementation drifts from contract
+5. **Team Collaboration**: Frontend/Backend teams can work in parallel using stubs
+
+## Quick Commands Summary
+
+```bash
+# Setup (5 minutes)
+npm install -g specmatic
+mkdir -p contracts user-service order-service
+
+# Start everything (2 minutes)
+cd user-service && mvn spring-boot:run &
+cd order-service && mvn spring-boot:run -Dspring-boot.run.arguments=--server.port=8081 &
+
+# Generate stubs (1 minute)
+specmatic stub contracts/user-service.yaml --port 9080 &
+specmatic stub contracts/order-service.yaml --port 9081 &
+
+# Run contract tests (2 minutes)
+cd user-service && mvn test -Dtest=ContractTest
+cd order-service && mvn test -Dtest=ContractTest
+```
+
+This gives you a complete contract-driven development demo showing the full workflow!
