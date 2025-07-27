@@ -1,0 +1,93 @@
+openapi: 3.0.0
+info:
+  title: Order Service API
+  version: 1.0.0
+  description: Manages orders
+servers:
+  - url: http://localhost:8081
+paths:
+  /orders:
+    post:
+      summary: Create new order
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateOrderRequest'
+      responses:
+        '201':
+          description: Order created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Order'
+        '400':
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /orders/{orderId}:
+    get:
+      summary: Get order by ID
+      parameters:
+        - name: orderId
+          in: path
+          required: true
+          schema:
+            type: string
+            example: "order-123"
+      responses:
+        '200':
+          description: Order found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Order'
+        '404':
+          description: Order not found
+
+components:
+  schemas:
+    CreateOrderRequest:
+      type: object
+      required: [userId, productId, quantity]
+      properties:
+        userId:
+          type: integer
+          example: 1
+        productId:
+          type: string
+          example: "PROD-123"
+        quantity:
+          type: integer
+          minimum: 1
+          example: 2
+    Order:
+      type: object
+      required: [orderId, userId, productId, quantity, status]
+      properties:
+        orderId:
+          type: string
+          example: "order-123"
+        userId:
+          type: integer
+          example: 1
+        productId:
+          type: string
+          example: "PROD-123"
+        quantity:
+          type: integer
+          example: 2
+        status:
+          type: string
+          enum: [CREATED, PROCESSING, SHIPPED, DELIVERED]
+          example: "CREATED"
+    Error:
+      type: object
+      required: [message]
+      properties:
+        message:
+          type: string
+          example: "Invalid request"
